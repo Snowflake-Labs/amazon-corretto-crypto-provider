@@ -170,7 +170,7 @@ public class AesCtrTest {
    * Per the {@code Cipher} contract, {@code doFinal()} resets the cipher to the state it was in
    * immediately after {@code init()}. For CTR mode that means a second {@code doFinal()} without an
    * intervening {@code init()} re-encrypts under the *same* initial counter rather than continuing
-   * where the first call left off — a keystream-reuse hazard inherent to the JCE API and identical
+   * where the first call left off -- a keystream-reuse hazard inherent to the JCE API and identical
    * in SunJCE, not an ACCP defect. This test pins that behavior rather than validating it.
    */
   @ParameterizedTest
@@ -572,7 +572,7 @@ public class AesCtrTest {
   /**
    * Increments the counter block as a single big-endian 128-bit integer, wrapping to zero on
    * overflow. This is SP 800-38A's standard incrementing function applied to the full block, which
-   * is what both AWS-LC's {@code EVP_aes_*_ctr} and SunJCE's {@code CounterMode} implement — as
+   * is what both AWS-LC's {@code EVP_aes_*_ctr} and SunJCE's {@code CounterMode} implement -- as
    * opposed to incrementing only a narrow trailing counter field, which is a property of
    * constructions layered above the primitive (e.g. RFC 3686) rather than of the primitive itself.
    */
@@ -844,7 +844,7 @@ public class AesCtrTest {
 
   /**
    * {@code init()} without explicit parameters may generate its own IV, which is only sound when
-   * encrypting — a random IV could not reproduce the keystream needed to decrypt. Covers all four
+   * encrypting -- a random IV could not reproduce the keystream needed to decrypt. Covers all four
    * outcomes of that opmode check: ENCRYPT and WRAP proceed, DECRYPT and UNWRAP are rejected.
    */
   @Test
@@ -1027,7 +1027,7 @@ public class AesCtrTest {
    * <p>This is the test that covers the native key-schedule-wipe hazard, since it is the only one
    * here that reaches the SPI's null-key reuse path: {@code EVP_CipherInit_ex} wipes the key
    * schedule whenever a non-NULL cipher is supplied, and a NULL key then fails to rebuild it.
-   * Verified by mutation — commenting out the {@code key == nullptr} guard in {@code
+   * Verified by mutation -- commenting out the {@code key == nullptr} guard in {@code
    * AesCtrCipher::init} makes this test crash the JVM with a SIGSEGV on a null function pointer
    * under LAZY/HYBRID (and, correctly, changes nothing under EAGER).
    */
@@ -1054,7 +1054,7 @@ public class AesCtrTest {
    *
    * <p>This is the converse of {@link #testKeyReuseAcrossInit}: it does not exercise the null-key
    * path at all (a key change always sends real key bytes), so it is insensitive to the native
-   * guard. What it does catch is the Java-side bookkeeping. Verified by mutation — forcing {@code
+   * guard. What it does catch is the Java-side bookkeeping. Verified by mutation -- forcing {@code
    * needsKeyInit = false} in {@code AesCtrSpi.init} fails this test for all three key sizes while
    * leaving the other two here passing.
    */
@@ -1118,7 +1118,7 @@ public class AesCtrTest {
 
   /**
    * Two distinct {@code SecretKeySpec} instances wrapping identical key bytes are treated as a key
-   * change by the SPI's identity comparison — safe, if conservative, since it merely forgoes the
+   * change by the SPI's identity comparison -- safe, if conservative, since it merely forgoes the
    * key-schedule reuse optimization. This confirms output correctness without asserting on which
    * internal path was taken.
    *
