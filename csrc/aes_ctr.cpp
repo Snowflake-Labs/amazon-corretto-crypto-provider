@@ -225,7 +225,6 @@ extern "C" JNIEXPORT jint JNICALL Java_com_amazon_corretto_crypto_provider_AesCt
 
 extern "C" JNIEXPORT jint JNICALL Java_com_amazon_corretto_crypto_provider_AesCtrSpi_nUpdate(JNIEnv* env,
     jclass,
-    jint opMode,
     jlong ctxPtr,
     jobject inputDirect,
     jbyteArray inputArray,
@@ -251,7 +250,6 @@ extern "C" JNIEXPORT jint JNICALL Java_com_amazon_corretto_crypto_provider_AesCt
 
 extern "C" JNIEXPORT jint JNICALL Java_com_amazon_corretto_crypto_provider_AesCtrSpi_nUpdateFinal(JNIEnv* env,
     jclass,
-    jint opMode,
     jlong ctxPtr,
     jboolean saveCtx,
     jobject inputDirect,

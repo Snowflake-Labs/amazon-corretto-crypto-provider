@@ -171,7 +171,7 @@ class AesCtrSpi extends CipherSpi {
       default:
         throw new InvalidAlgorithmParameterException("Invalid opmode: " + opmode);
     }
-    this.needsKeyInit = this.key != key; // Identity equality check
+    this.needsKeyInit |= this.key != key; // Identity equality check
     this.needsNativeInit = true;
     this.key = (SecretKey) key; // Checked by checkAesKey
     this.ivParamSpec = ivParameterSpec;
@@ -317,7 +317,6 @@ class AesCtrSpi extends CipherSpi {
           context.use(
               ctxPtr ->
                   nUpdate(
-                      opMode,
                       ctxPtr,
                       inputDirect,
                       inputArray,
@@ -400,7 +399,9 @@ class AesCtrSpi extends CipherSpi {
       final byte[] outputArray,
       final int outputOffset) {
     final int result;
-    if (needsNativeInit) {
+    final boolean neededNativeInit = needsNativeInit;
+    needsNativeInit = true; // Reset this value immediately so no matter what happens we reset on the next call
+    if (neededNativeInit) {
       // One-shot operation
       if (context != null) {
         final byte[] maybeKeyBytes;
@@ -479,7 +480,6 @@ class AesCtrSpi extends CipherSpi {
           context.use(
               ctxPtr ->
                   nUpdateFinal(
-                      opMode,
                       ctxPtr,
                       /*saveCtx*/ true,
                       inputDirect,
@@ -494,10 +494,8 @@ class AesCtrSpi extends CipherSpi {
       final long ctxPtr = context.take();
       context = null; // The context can no longer be used so discard it.
       needsKeyInit = true;
-      needsNativeInit = true;
       result =
           nUpdateFinal(
-              opMode,
               ctxPtr,
               /*saveCtx*/ false, // then free the context at end of operation
               inputDirect,
@@ -508,7 +506,6 @@ class AesCtrSpi extends CipherSpi {
               outputArray,
               outputOffset);
     }
-    needsNativeInit = true; // Have us reset on the next call
 
     return result;
   }
@@ -555,7 +552,6 @@ class AesCtrSpi extends CipherSpi {
       int outputOffset);
 
   private static native int nUpdate(
-      int opMode,
       long ctxPtr,
       ByteBuffer inputDirect,
       byte[] inputArray,
@@ -566,7 +562,6 @@ class AesCtrSpi extends CipherSpi {
       int outputOffset);
 
   private static native int nUpdateFinal(
-      int opMode,
       long ctxPtr,
       boolean saveCtx,
       ByteBuffer inputDirect,
@@ -580,7 +575,7 @@ class AesCtrSpi extends CipherSpi {
   @Override
   protected byte[] engineWrap(final Key key) throws IllegalBlockSizeException, InvalidKeyException {
     try {
-      final byte[] encoded = Utils.encodeForWrapping(key);
+      final byte[] encoded = Utils.encodeForWrapping(this.provider, key);
       return engineDoFinal(encoded, 0, encoded.length);
     } catch (final BadPaddingException ex) {
       // This is not reachable when encrypting.
@@ -594,7 +589,7 @@ class AesCtrSpi extends CipherSpi {
       throws InvalidKeyException, NoSuchAlgorithmException {
     try {
       final byte[] unwrappedKey = engineDoFinal(wrappedKey, 0, wrappedKey.length);
-      return Utils.buildUnwrappedKey(unwrappedKey, wrappedKeyAlgorithm, wrappedKeyType);
+      return Utils.buildUnwrappedKey(this.provider, unwrappedKey, wrappedKeyAlgorithm, wrappedKeyType);
     } catch (final BadPaddingException | IllegalBlockSizeException | InvalidKeySpecException ex) {
       // BadPaddingException and IllegalBlockSizeException are not reachable for CTR, which has no
       // padding, but the JCA spec only allows throwing InvalidKeyException for engineUnwrap.

@@ -1154,6 +1154,51 @@ public class AesCtrTest {
         "second key object (same bytes, different instance) diverged from reference");
   }
 
+  /**
+   * A double {@code init()} onto the same key object must not be mistaken for "the native context
+   * already has this key loaded" -- a saved context can still hold a *different* key's schedule
+   * left over from before the double init.
+   */
+  @Test
+  public void doubleInitsWork() throws Exception {
+    final SecretKey key = new SecretKeySpec(getRandomBytes(16), "AES");
+    final SecretKey key2 = new SecretKeySpec(getRandomBytes(16), "AES");
+    final Cipher cipher = Cipher.getInstance(ALGORITHM, TestUtil.NATIVE_PROVIDER);
+    final IvParameterSpec iv = new IvParameterSpec(getRandomBytes(BLOCK_SIZE));
+    final byte[] plaintext = getRandomBytes(64);
+
+    cipher.init(Cipher.ENCRYPT_MODE, key, iv);
+
+    // Force init under key1
+    cipher.update(plaintext); // We don't care about the output, we just need to force use
+    cipher.doFinal(plaintext); // We don't care about the output, we just need to force use
+
+    // Shift to key2, but do a double init which might cause us to think we don't need to do it again
+    cipher.init(Cipher.ENCRYPT_MODE, key2, iv);
+    cipher.init(Cipher.ENCRYPT_MODE, key2, iv);
+
+    final byte[] ct1 = cipher.update(plaintext);
+    final byte[] ct2 = cipher.doFinal(plaintext);
+    final byte[] actual = new byte[ct1.length + ct2.length];
+    System.arraycopy(ct1, 0, actual, 0, ct1.length);
+    System.arraycopy(ct2, 0, actual, ct1.length, ct2.length);
+
+    final byte[] combinedPlaintext = new byte[plaintext.length * 2];
+    System.arraycopy(plaintext, 0, combinedPlaintext, 0, plaintext.length);
+    System.arraycopy(plaintext, 0, combinedPlaintext, plaintext.length, plaintext.length);
+    assertArraysHexEquals(
+        referenceCtr(key2, iv.getIV(), combinedPlaintext),
+        actual,
+        "double init after a key change diverged from the key2 reference");
+
+    cipher.init(Cipher.DECRYPT_MODE, key2, iv);
+    final byte[] decrypted1 = cipher.update(ct1);
+    final byte[] decrypted2 = cipher.doFinal(ct2);
+
+    assertArraysHexEquals(plaintext, decrypted1);
+    assertArraysHexEquals(plaintext, decrypted2);
+  }
+  
   // Some KATs taken from RFC 3686
   // https://datatracker.ietf.org/doc/html/rfc3686.html#section-6
 
