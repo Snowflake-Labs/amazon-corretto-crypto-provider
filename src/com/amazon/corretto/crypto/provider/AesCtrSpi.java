@@ -12,6 +12,7 @@ import java.security.SecureRandom;
 import java.security.spec.AlgorithmParameterSpec;
 import java.security.spec.InvalidKeySpecException;
 import java.security.spec.InvalidParameterSpecException;
+import java.util.Arrays;
 import javax.crypto.BadPaddingException;
 import javax.crypto.Cipher;
 import javax.crypto.CipherSpi;
@@ -157,7 +158,7 @@ class AesCtrSpi extends CipherSpi {
   private void init(final int opmode, final Key key, final IvParameterSpec ivParameterSpec)
       throws InvalidKeyException, InvalidAlgorithmParameterException {
     // We're just checking for correctness and can discard the returned array
-    Utils.checkAesKey(key);
+    Arrays.fill(Utils.checkAesKey(key), (byte) 0);
 
     switch (opmode) {
       case Cipher.ENCRYPT_MODE:
@@ -243,65 +244,81 @@ class AesCtrSpi extends CipherSpi {
       final byte[] outputArray,
       final int outputOffset) {
     final int result;
-    if (needsNativeInit) {
-      // We need to re-initialize the EVP_CipherCtx object.
-      if (context == null) {
-        // No context, so create it
-        final long[] ctxContainer = new long[] {0};
-        try {
-          final byte[] keyBytes = Utils.checkAesKey(key);
-          final int keyLen = keyBytes.length;
-          result =
-              nInitUpdate(
-                  opMode,
-                  keyBytes,
-                  keyLen,
-                  ivParamSpec.getIV(),
-                  ctxContainer,
-                  0,
-                  inputDirect,
-                  inputArray,
-                  inputOffset,
-                  inputLen,
-                  outputDirect,
-                  outputArray,
-                  outputOffset);
-          context = new NativeEvpCipherCtx(ctxContainer[0]);
-        } catch (final InvalidKeyException ex) {
-          // This should be impossible. Our key has changed out from under us
-          cleanUpNativeContextIfNeeded(ctxContainer);
-          throw new RuntimeCryptoException("Unexpected error", ex);
-        } catch (final Exception ex) {
-          cleanUpNativeContextIfNeeded(ctxContainer);
-          throw ex;
-        }
-      } else {
-        // The context already exists and we can reuse it.
-        // Check to see if the key has changed and so needs to be reinitialized
-        final byte[] maybeKeyBytes;
-        final int keyLen;
-        if (needsKeyInit) {
+    try (AutoDestroyer destroyer = new AutoDestroyer()) {
+      if (needsNativeInit) {
+        // We need to re-initialize the EVP_CipherCtx object.
+        if (context == null) {
+          // No context, so create it
+          final long[] ctxContainer = new long[] {0};
           try {
-            maybeKeyBytes = Utils.checkAesKey(key);
-            keyLen = maybeKeyBytes.length;
+            final byte[] keyBytes = destroyer.register(Utils.checkAesKey(key));
+            final int keyLen = keyBytes.length;
+            result =
+                nInitUpdate(
+                    opMode,
+                    keyBytes,
+                    keyLen,
+                    ivParamSpec.getIV(),
+                    ctxContainer,
+                    0,
+                    inputDirect,
+                    inputArray,
+                    inputOffset,
+                    inputLen,
+                    outputDirect,
+                    outputArray,
+                    outputOffset);
+            context = new NativeEvpCipherCtx(ctxContainer[0]);
           } catch (final InvalidKeyException ex) {
             // This should be impossible. Our key has changed out from under us
+            cleanUpNativeContextIfNeeded(ctxContainer);
             throw new RuntimeCryptoException("Unexpected error", ex);
+          } catch (final Exception ex) {
+            cleanUpNativeContextIfNeeded(ctxContainer);
+            throw ex;
           }
         } else {
-          maybeKeyBytes = null;
-          keyLen = 0;
-        }
+          // The context already exists and we can reuse it.
+          // Check to see if the key has changed and so needs to be reinitialized
+          final byte[] maybeKeyBytes;
+          final int keyLen;
+          if (needsKeyInit) {
+            try {
+              maybeKeyBytes = destroyer.register(Utils.checkAesKey(key));
+              keyLen = maybeKeyBytes.length;
+            } catch (final InvalidKeyException ex) {
+              // This should be impossible. Our key has changed out from under us
+              throw new RuntimeCryptoException("Unexpected error", ex);
+            }
+          } else {
+            maybeKeyBytes = null;
+            keyLen = 0;
+          }
 
+          result =
+              context.use(
+                  ctxPtr ->
+                      nInitUpdate(
+                          opMode,
+                          maybeKeyBytes,
+                          keyLen,
+                          ivParamSpec.getIV(),
+                          null,
+                          ctxPtr,
+                          inputDirect,
+                          inputArray,
+                          inputOffset,
+                          inputLen,
+                          outputDirect,
+                          outputArray,
+                          outputOffset));
+        }
+      } else {
+        // Subsequent update
         result =
             context.use(
                 ctxPtr ->
-                    nInitUpdate(
-                        opMode,
-                        maybeKeyBytes,
-                        keyLen,
-                        ivParamSpec.getIV(),
-                        null,
+                    nUpdate(
                         ctxPtr,
                         inputDirect,
                         inputArray,
@@ -311,24 +328,10 @@ class AesCtrSpi extends CipherSpi {
                         outputArray,
                         outputOffset));
       }
-    } else {
-      // Subsequent update
-      result =
-          context.use(
-              ctxPtr ->
-                  nUpdate(
-                      ctxPtr,
-                      inputDirect,
-                      inputArray,
-                      inputOffset,
-                      inputLen,
-                      outputDirect,
-                      outputArray,
-                      outputOffset));
+      needsKeyInit = false;
+      needsNativeInit = false;
+      return result;
     }
-    needsKeyInit = false;
-    needsNativeInit = false;
-    return result;
   }
 
   @Override
@@ -402,36 +405,88 @@ class AesCtrSpi extends CipherSpi {
     final boolean neededNativeInit = needsNativeInit;
     needsNativeInit =
         true; // Reset this value immediately so no matter what happens we reset on the next call
-    if (neededNativeInit) {
-      // One-shot operation
-      if (context != null) {
-        final byte[] maybeKeyBytes;
-        final int keyLen;
-        if (needsKeyInit) {
+    try (AutoDestroyer destroyer = new AutoDestroyer()) {
+      if (neededNativeInit) {
+        // One-shot operation
+        if (context != null) {
+          final byte[] maybeKeyBytes;
+          final int keyLen;
+          if (needsKeyInit) {
+            try {
+              maybeKeyBytes = destroyer.register(Utils.checkAesKey(key));
+              keyLen = maybeKeyBytes.length;
+            } catch (final InvalidKeyException ex) {
+              // This should be impossible. Our key has changed out from under us
+              throw new RuntimeCryptoException("Unexpected error", ex);
+            }
+          } else {
+            maybeKeyBytes = null;
+            keyLen = 0;
+          }
+          // Only reason we'd both need need a native init and have context != null is because we're
+          // saving the context
+          result =
+              context.use(
+                  ctxPtr ->
+                      nInitUpdateFinal(
+                          opMode,
+                          maybeKeyBytes,
+                          keyLen,
+                          ivParamSpec.getIV(),
+                          null,
+                          ctxPtr,
+                          true,
+                          inputDirect,
+                          inputArray,
+                          inputOffset,
+                          inputLen,
+                          outputDirect,
+                          outputArray,
+                          outputOffset));
+          needsKeyInit = false;
+        } else {
+          // context doesn't exist but we might want to save it
+          final long[] maybeCtxContainer = saveContext ? new long[1] : null;
+          // One-shot operation
           try {
-            maybeKeyBytes = Utils.checkAesKey(key);
-            keyLen = maybeKeyBytes.length;
+            final byte[] keyBytes = destroyer.register(Utils.checkAesKey(key));
+            final int keyLen = keyBytes.length;
+            result =
+                nInitUpdateFinal(
+                    opMode,
+                    keyBytes,
+                    keyLen,
+                    ivParamSpec.getIV(),
+                    maybeCtxContainer,
+                    0,
+                    saveContext,
+                    inputDirect,
+                    inputArray,
+                    inputOffset,
+                    inputLen,
+                    outputDirect,
+                    outputArray,
+                    outputOffset);
+            if (saveContext) {
+              context = new NativeEvpCipherCtx(maybeCtxContainer[0]);
+              needsKeyInit = false;
+            }
           } catch (final InvalidKeyException ex) {
             // This should be impossible. Our key has changed out from under us
+            cleanUpNativeContextIfNeeded(maybeCtxContainer);
             throw new RuntimeCryptoException("Unexpected error", ex);
+          } catch (final Exception ex) {
+            cleanUpNativeContextIfNeeded(maybeCtxContainer);
+            throw ex;
           }
-        } else {
-          maybeKeyBytes = null;
-          keyLen = 0;
         }
-        // Only reason we'd both need need a native init and have context != null is because we're
-        // saving the context
+      } else if (saveContext) {
         result =
             context.use(
                 ctxPtr ->
-                    nInitUpdateFinal(
-                        opMode,
-                        maybeKeyBytes,
-                        keyLen,
-                        ivParamSpec.getIV(),
-                        null,
+                    nUpdateFinal(
                         ctxPtr,
-                        true,
+                        /*saveCtx*/ true,
                         inputDirect,
                         inputArray,
                         inputOffset,
@@ -439,76 +494,26 @@ class AesCtrSpi extends CipherSpi {
                         outputDirect,
                         outputArray,
                         outputOffset));
-        needsKeyInit = false;
       } else {
-        // context doesn't exist but we might want to save it
-        final long[] maybeCtxContainer = saveContext ? new long[1] : null;
-        // One-shot operation
-        try {
-          final byte[] keyBytes = Utils.checkAesKey(key);
-          final int keyLen = keyBytes.length;
-          result =
-              nInitUpdateFinal(
-                  opMode,
-                  keyBytes,
-                  keyLen,
-                  ivParamSpec.getIV(),
-                  maybeCtxContainer,
-                  0,
-                  saveContext,
-                  inputDirect,
-                  inputArray,
-                  inputOffset,
-                  inputLen,
-                  outputDirect,
-                  outputArray,
-                  outputOffset);
-          if (saveContext) {
-            context = new NativeEvpCipherCtx(maybeCtxContainer[0]);
-            needsKeyInit = false;
-          }
-        } catch (final InvalidKeyException ex) {
-          // This should be impossible. Our key has changed out from under us
-          cleanUpNativeContextIfNeeded(maybeCtxContainer);
-          throw new RuntimeCryptoException("Unexpected error", ex);
-        } catch (final Exception ex) {
-          cleanUpNativeContextIfNeeded(maybeCtxContainer);
-          throw ex;
-        }
+        // Final operation, take ownership of the context from Janitor
+        final long ctxPtr = context.take();
+        context = null; // The context can no longer be used so discard it.
+        needsKeyInit = true;
+        result =
+            nUpdateFinal(
+                ctxPtr,
+                /*saveCtx*/ false, // then free the context at end of operation
+                inputDirect,
+                inputArray,
+                inputOffset,
+                inputLen,
+                outputDirect,
+                outputArray,
+                outputOffset);
       }
-    } else if (saveContext) {
-      result =
-          context.use(
-              ctxPtr ->
-                  nUpdateFinal(
-                      ctxPtr,
-                      /*saveCtx*/ true,
-                      inputDirect,
-                      inputArray,
-                      inputOffset,
-                      inputLen,
-                      outputDirect,
-                      outputArray,
-                      outputOffset));
-    } else {
-      // Final operation, take ownership of the context from Janitor
-      final long ctxPtr = context.take();
-      context = null; // The context can no longer be used so discard it.
-      needsKeyInit = true;
-      result =
-          nUpdateFinal(
-              ctxPtr,
-              /*saveCtx*/ false, // then free the context at end of operation
-              inputDirect,
-              inputArray,
-              inputOffset,
-              inputLen,
-              outputDirect,
-              outputArray,
-              outputOffset);
-    }
 
-    return result;
+      return result;
+    }
   }
 
   private void cleanUpNativeContextIfNeeded(final long[] contextContainer) {
@@ -575,8 +580,8 @@ class AesCtrSpi extends CipherSpi {
 
   @Override
   protected byte[] engineWrap(final Key key) throws IllegalBlockSizeException, InvalidKeyException {
-    try {
-      final byte[] encoded = Utils.encodeForWrapping(this.provider, key);
+    try (AutoDestroyer destroyer = new AutoDestroyer()) {
+      final byte[] encoded = destroyer.register(Utils.encodeForWrapping(this.provider, key));
       return engineDoFinal(encoded, 0, encoded.length);
     } catch (final BadPaddingException ex) {
       // This is not reachable when encrypting.
@@ -588,8 +593,9 @@ class AesCtrSpi extends CipherSpi {
   protected Key engineUnwrap(
       final byte[] wrappedKey, final String wrappedKeyAlgorithm, final int wrappedKeyType)
       throws InvalidKeyException, NoSuchAlgorithmException {
-    try {
-      final byte[] unwrappedKey = engineDoFinal(wrappedKey, 0, wrappedKey.length);
+    try (AutoDestroyer destroyer = new AutoDestroyer()) {
+      final byte[] unwrappedKey =
+          destroyer.register(engineDoFinal(wrappedKey, 0, wrappedKey.length));
       return Utils.buildUnwrappedKey(
           this.provider, unwrappedKey, wrappedKeyAlgorithm, wrappedKeyType);
     } catch (final BadPaddingException | IllegalBlockSizeException | InvalidKeySpecException ex) {
