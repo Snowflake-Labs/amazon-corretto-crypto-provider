@@ -1173,7 +1173,8 @@ public class AesCtrTest {
     cipher.update(plaintext); // We don't care about the output, we just need to force use
     cipher.doFinal(plaintext); // We don't care about the output, we just need to force use
 
-    // Shift to key2, but do a double init which might cause us to think we don't need to do it again
+    // Shift to key2, but do a double init which might cause us to think we don't need to do it
+    // again
     cipher.init(Cipher.ENCRYPT_MODE, key2, iv);
     cipher.init(Cipher.ENCRYPT_MODE, key2, iv);
 
@@ -1198,7 +1199,7 @@ public class AesCtrTest {
     assertArraysHexEquals(plaintext, decrypted1);
     assertArraysHexEquals(plaintext, decrypted2);
   }
-  
+
   // Some KATs taken from RFC 3686
   // https://datatracker.ietf.org/doc/html/rfc3686.html#section-6
 

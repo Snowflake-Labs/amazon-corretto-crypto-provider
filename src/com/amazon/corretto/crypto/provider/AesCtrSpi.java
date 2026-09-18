@@ -400,7 +400,8 @@ class AesCtrSpi extends CipherSpi {
       final int outputOffset) {
     final int result;
     final boolean neededNativeInit = needsNativeInit;
-    needsNativeInit = true; // Reset this value immediately so no matter what happens we reset on the next call
+    needsNativeInit =
+        true; // Reset this value immediately so no matter what happens we reset on the next call
     if (neededNativeInit) {
       // One-shot operation
       if (context != null) {
@@ -589,7 +590,8 @@ class AesCtrSpi extends CipherSpi {
       throws InvalidKeyException, NoSuchAlgorithmException {
     try {
       final byte[] unwrappedKey = engineDoFinal(wrappedKey, 0, wrappedKey.length);
-      return Utils.buildUnwrappedKey(this.provider, unwrappedKey, wrappedKeyAlgorithm, wrappedKeyType);
+      return Utils.buildUnwrappedKey(
+          this.provider, unwrappedKey, wrappedKeyAlgorithm, wrappedKeyType);
     } catch (final BadPaddingException | IllegalBlockSizeException | InvalidKeySpecException ex) {
       // BadPaddingException and IllegalBlockSizeException are not reachable for CTR, which has no
       // padding, but the JCA spec only allows throwing InvalidKeyException for engineUnwrap.
